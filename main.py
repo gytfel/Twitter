@@ -17,6 +17,7 @@ import time
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 
+from auth import AuthError
 from config import load_config
 from generator import GeneratorError, generate
 from history import History
@@ -109,14 +110,12 @@ def post_once(cfg) -> str:
 
     log.info("Текст поста (%s символов):\n%s", len(text), text)
 
-    poster = Poster(
-        cfg.x_api_key, cfg.x_api_secret,
-        cfg.x_access_token, cfg.x_access_secret,
-        dry_run=cfg.dry_run,
-    )
-
     try:
+        poster = Poster.from_config(cfg)
         tweet_id = poster.post(text)
+    except AuthError as e:
+        log.error("Не смог авторизоваться: %s", e)
+        return FAILED
     except PostError as e:
         log.error("Публикация не удалась: %s", e)
         return FAILED
@@ -166,16 +165,20 @@ def check(cfg) -> int:
     import requests
     import tweepy
 
-    client = tweepy.Client(
-        consumer_key=cfg.x_api_key,
-        consumer_secret=cfg.x_api_secret,
-        access_token=cfg.x_access_token,
-        access_token_secret=cfg.x_access_secret,
-    )
+    from poster import build_client
+
+    print(f"Режим авторизации: {cfg.auth_mode}")
+    try:
+        client, user_auth = build_client(cfg)
+    except AuthError as e:
+        print(f"{e}")
+        print("Расписание на сегодня:",
+              [t.strftime("%H:%M") for t in slot_times(cfg, date.today())])
+        return 1
 
     keys_ok = True
     try:
-        me = client.get_me()
+        me = client.get_me(user_auth=user_auth)
         if me.data is None:
             print("X ответил, но аккаунт не вернул. Проверь, что токены выпущены "
                   "для того же приложения, что и API Key.")
@@ -191,14 +194,24 @@ def check(cfg) -> int:
                 keys_ok = False
 
     except tweepy.errors.Unauthorized:
-        print("401 Unauthorized — ключи неверные или отозваны.\n"
-              "  Проверь, что все четыре значения в .env скопированы целиком и без пробелов.")
+        if cfg.auth_mode == "oauth2":
+            print("401 Unauthorized — access token не принят.\n"
+                  "  Удали token.json и пройди авторизацию заново: refresh token\n"
+                  "  мог быть отозван или уже использован другим запуском.")
+        else:
+            print("401 Unauthorized — ключи неверные или отозваны.\n"
+                  "  Проверь, что все четыре значения в .env скопированы целиком и без пробелов.")
         keys_ok = False
 
     except tweepy.errors.Forbidden:
-        print("403 Forbidden — доступ есть, но не на запись.\n"
-              "  У приложения права Read вместо Read and Write, либо Access Token\n"
-              "  выпущен до смены прав — перевыпусти его.")
+        if cfg.auth_mode == "oauth2":
+            print("403 Forbidden — в токене не хватает прав.\n"
+                  "  Нужен scope tweet.write (и users.read для этой проверки).\n"
+                  "  Авторизуйся заново, запросив полный набор scope.")
+        else:
+            print("403 Forbidden — доступ есть, но не на запись.\n"
+                  "  У приложения права Read вместо Read and Write, либо Access Token\n"
+                  "  выпущен до смены прав — перевыпусти его.")
         keys_ok = False
 
     except tweepy.errors.TooManyRequests:

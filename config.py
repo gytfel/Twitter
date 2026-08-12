@@ -63,11 +63,24 @@ def _env_hours(name: str, default: list[str]) -> list[int]:
 
 @dataclass
 class Config:
-    # --- X (Twitter) API, OAuth 1.0a User Context ---
-    x_api_key: str = field(default_factory=lambda: _env("X_API_KEY", required=True))
-    x_api_secret: str = field(default_factory=lambda: _env("X_API_SECRET", required=True))
-    x_access_token: str = field(default_factory=lambda: _env("X_ACCESS_TOKEN", required=True))
-    x_access_secret: str = field(default_factory=lambda: _env("X_ACCESS_TOKEN_SECRET", required=True))
+    # --- Способ авторизации: "oauth1" или "oauth2" ---
+    # oauth1 — токен не протухает, ничего обновлять не надо. Предпочтительно.
+    # oauth2 — токен живёт ~2 часа, бот сам обновляет его по refresh token.
+    auth_mode: str = field(default_factory=lambda: _env("AUTH_MODE", "oauth1").lower())
+
+    # --- OAuth 1.0a User Context (нужно при AUTH_MODE=oauth1) ---
+    x_api_key: str = field(default_factory=lambda: _env("X_API_KEY"))
+    x_api_secret: str = field(default_factory=lambda: _env("X_API_SECRET"))
+    x_access_token: str = field(default_factory=lambda: _env("X_ACCESS_TOKEN"))
+    x_access_secret: str = field(default_factory=lambda: _env("X_ACCESS_TOKEN_SECRET"))
+
+    # --- OAuth 2.0 User Context (нужно при AUTH_MODE=oauth2) ---
+    x_client_id: str = field(default_factory=lambda: _env("X_CLIENT_ID"))
+    x_client_secret: str = field(default_factory=lambda: _env("X_CLIENT_SECRET"))
+    # Стартовый refresh token. Дальше бот хранит актуальный в token.json:
+    # X меняет refresh token при каждом обновлении, значение из .env устаревает
+    # после первого же запуска и нужно только для первичной загрузки.
+    x_refresh_token: str = field(default_factory=lambda: _env("X_REFRESH_TOKEN"))
 
     # Ожидаемый аккаунт. На то, куда уйдёт пост, НЕ влияет — аккаунт целиком
     # определяется Access Token. Нужен, чтобы `check` поймал чужие токены
@@ -104,9 +117,39 @@ class Config:
     # --- Файлы ---
     posts_file: Path = BASE_DIR / "posts.txt"
     history_file: Path = BASE_DIR / "history.json"
+    token_file: Path = BASE_DIR / "token.json"
     log_file: Path = BASE_DIR / "bot.log"
 
     def validate(self) -> None:
+        if self.auth_mode not in ("oauth1", "oauth2"):
+            raise RuntimeError("AUTH_MODE должен быть 'oauth1' или 'oauth2'")
+
+        if self.auth_mode == "oauth1":
+            missing = [
+                name for name, value in (
+                    ("X_API_KEY", self.x_api_key),
+                    ("X_API_SECRET", self.x_api_secret),
+                    ("X_ACCESS_TOKEN", self.x_access_token),
+                    ("X_ACCESS_TOKEN_SECRET", self.x_access_secret),
+                ) if not value
+            ]
+            if missing:
+                raise RuntimeError(
+                    f"AUTH_MODE=oauth1, но не заданы: {', '.join(missing)}. "
+                    f"Возьми их в developer.x.com → Keys and tokens."
+                )
+        else:
+            if not self.x_client_id:
+                raise RuntimeError(
+                    "AUTH_MODE=oauth2, но не задан X_CLIENT_ID. "
+                    "Он в developer.x.com → Keys and tokens → OAuth 2.0 Client ID and Client Secret."
+                )
+            if not self.x_refresh_token and not self.token_file.exists():
+                raise RuntimeError(
+                    "AUTH_MODE=oauth2, но нет ни X_REFRESH_TOKEN в .env, ни token.json. "
+                    "Пройди авторизацию и положи refresh token в X_REFRESH_TOKEN."
+                )
+
         if self.content_mode not in ("file", "ai"):
             raise RuntimeError("CONTENT_MODE должен быть 'file' или 'ai'")
         if self.content_mode == "ai" and not self.anthropic_api_key:

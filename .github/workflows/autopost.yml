@@ -27,27 +27,36 @@ jobs:
 
       - name: Publish post
         env:
+          # OAuth 1.0a
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          # OAuth 2.0. X_REFRESH_TOKEN нужен только на первый запуск —
+          # дальше актуальный лежит в token.json в репозитории.
+          X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+          X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+          X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AUTH_MODE: oauth2
           CONTENT_MODE: file
           DRY_RUN: 'false'
         run: python main.py once
 
-      - name: Save history
-        # Пишем историю даже если публикация упала: если твит всё-таки ушёл,
-        # потерять запись о нём хуже, чем лишний раз ничего не закоммитить.
+      - name: Save state
+        # Пишем даже если публикация упала, и это принципиально для OAuth 2.0:
+        # X гасит старый refresh token в момент обновления, так что потерять
+        # новый token.json = потерять доступ до ручной переавторизации.
         if: always()
         run: |
-          # Пропуск по суточному лимиту не создаёт history.json — это не ошибка.
-          test -f history.json || exit 0
           git config user.name  "autopost-bot"
           git config user.email "autopost@users.noreply.github.com"
-          git add history.json
+          # Файлов может не быть: пропуск по суточному лимиту или режим oauth1.
+          for f in history.json token.json; do
+            if [ -f "$f" ]; then git add "$f"; fi
+          done
           git diff --staged --quiet && exit 0
-          git commit -m "history: $(date -u +%F_%H:%M)"
-          # Параллельный запуск мог обновить историю раньше нас
+          git commit -m "state: $(date -u +%F_%H:%M)"
+          # Параллельный запуск мог обновить файлы раньше нас
           git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
