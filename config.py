@@ -44,6 +44,23 @@ def _env_list(name: str, default: list[str]) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _env_hours(name: str, default: list[str]) -> list[int]:
+    """Часы публикации. Ошибку ловим здесь, а не через сутки в момент постинга."""
+    hours = []
+    for item in _env_list(name, default):
+        try:
+            hour = int(item)
+        except ValueError:
+            raise RuntimeError(
+                f"{name} должен быть списком часов через запятую (например 10,15,20), "
+                f"а не {item!r}"
+            )
+        if not 0 <= hour <= 23:
+            raise RuntimeError(f"{name}: час {hour} вне диапазона 0..23")
+        hours.append(hour)
+    return sorted(set(hours))
+
+
 @dataclass
 class Config:
     # --- X (Twitter) API, OAuth 1.0a User Context ---
@@ -70,7 +87,7 @@ class Config:
     posts_per_day: int = field(default_factory=lambda: _env_int("POSTS_PER_DAY", 3))
     # Часы, в которые бот постит (локальное время сервера)
     active_hours: list[int] = field(
-        default_factory=lambda: [int(h) for h in _env_list("ACTIVE_HOURS", ["10", "15", "20"])]
+        default_factory=lambda: _env_hours("ACTIVE_HOURS", ["10", "15", "20"])
     )
     # Случайный сдвиг в минутах, чтобы посты не выходили секунда-в-секунду
     jitter_minutes: int = field(default_factory=lambda: _env_int("JITTER_MINUTES", 25))
@@ -89,6 +106,12 @@ class Config:
             raise RuntimeError("CONTENT_MODE должен быть 'file' или 'ai'")
         if self.content_mode == "ai" and not self.anthropic_api_key:
             raise RuntimeError("CONTENT_MODE=ai, но не задан ANTHROPIC_API_KEY")
+        if not self.active_hours:
+            raise RuntimeError("ACTIVE_HOURS пуст — укажи хотя бы один час, например 10,15,20")
+        if self.posts_per_day < 1:
+            raise RuntimeError("POSTS_PER_DAY должен быть не меньше 1")
+        if self.jitter_minutes < 0:
+            raise RuntimeError("JITTER_MINUTES не может быть отрицательным")
         if self.posts_per_day > len(self.active_hours):
             raise RuntimeError(
                 f"POSTS_PER_DAY={self.posts_per_day}, но в ACTIVE_HOURS всего "

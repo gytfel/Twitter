@@ -24,6 +24,12 @@ from poster import Poster, PostError
 
 log = logging.getLogger("autopost")
 
+# Результаты post_once. Важно различать «сегодня уже хватит» и настоящую поломку:
+# от этого зависит код возврата, а значит — красный или зелёный шаг в CI.
+POSTED = "posted"
+SKIPPED = "skipped"
+FAILED = "failed"
+
 
 def setup_logging(log_file) -> None:
     logging.basicConfig(
@@ -40,9 +46,24 @@ def setup_logging(log_file) -> None:
 
 # ------------------------------------------------------------------ расписание
 
+def pick_hours(hours: list[int], count: int) -> list[int]:
+    """Выбираем count часов, распределяя их по дню, а не срезая первые подряд.
+
+    Иначе при POSTS_PER_DAY=2 и ACTIVE_HOURS=10,15,20 вечерний слот
+    не использовался бы никогда.
+    """
+    hours = sorted(set(hours))
+    if count >= len(hours):
+        return hours
+    if count == 1:
+        return [hours[0]]
+    step = (len(hours) - 1) / (count - 1)
+    return [hours[round(i * step)] for i in range(count)]
+
+
 def slot_times(cfg, day: date) -> list[datetime]:
     """Времена публикаций на конкретный день, со стабильным случайным сдвигом."""
-    hours = sorted(set(cfg.active_hours))[: cfg.posts_per_day]
+    hours = pick_hours(cfg.active_hours, cfg.posts_per_day)
     times = []
     for hour in hours:
         # seed привязан к дню и часу → сдвиг не «прыгает» при пересчёте
@@ -72,19 +93,19 @@ def sleep_until(moment: datetime) -> None:
 
 # -------------------------------------------------------------------- действия
 
-def post_once(cfg) -> bool:
+def post_once(cfg) -> str:
     history = History(cfg.history_file)
 
     already = history.posted_today()
     if already >= cfg.max_posts_per_day:
         log.warning("Сегодня уже %s постов (лимит %s). Пропускаю.", already, cfg.max_posts_per_day)
-        return False
+        return SKIPPED
 
     try:
         text = generate(cfg, history)
     except GeneratorError as e:
         log.error("Не смог получить текст поста: %s", e)
-        return False
+        return FAILED
 
     log.info("Текст поста (%s символов):\n%s", len(text), text)
 
@@ -98,10 +119,16 @@ def post_once(cfg) -> bool:
         tweet_id = poster.post(text)
     except PostError as e:
         log.error("Публикация не удалась: %s", e)
-        return False
+        return FAILED
+
+    if cfg.dry_run:
+        # В истории только реально опубликованное: иначе холостые прогоны
+        # съедали бы суточный лимит и «сжигали» посты из пула.
+        log.info("[DRY RUN] В историю не записываю, суточный лимит не расходуется.")
+        return POSTED
 
     history.add(text, tweet_id)
-    return True
+    return POSTED
 
 
 def daemon(cfg) -> None:
@@ -111,9 +138,11 @@ def daemon(cfg) -> None:
         " (DRY RUN)" if cfg.dry_run else "",
     )
     while True:
-        moment = next_slot(cfg, datetime.now())
-        log.info("Следующий пост: %s", moment.strftime("%Y-%m-%d %H:%M"))
         try:
+            # Расчёт слота тоже внутри try: раньше исключение отсюда
+            # убивало весь демон, а не одну итерацию.
+            moment = next_slot(cfg, datetime.now())
+            log.info("Следующий пост: %s", moment.strftime("%Y-%m-%d %H:%M"))
             sleep_until(moment)
             post_once(cfg)
         except KeyboardInterrupt:
@@ -162,7 +191,9 @@ def main() -> int:
 
     try:
         if args.command == "once":
-            return 0 if post_once(cfg) else 1
+            # Пропуск по суточному лимиту — штатная ситуация, не ошибка,
+            # иначе шаг в GitHub Actions краснеет на ровном месте.
+            return 1 if post_once(cfg) == FAILED else 0
         if args.command == "run":
             daemon(cfg)
         elif args.command == "preview":
