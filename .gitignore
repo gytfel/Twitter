@@ -1,0 +1,15 @@
+# Секреты — НИКОГДА не коммитить
+.env
+.env.*
+!.env.example
+
+# Рабочие файлы бота
+bot.log
+history.tmp
+cron.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

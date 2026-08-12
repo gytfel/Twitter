@@ -15,11 +15,13 @@ log = logging.getLogger(__name__)
 
 def normalize(text: str) -> str:
     """Приводим текст к каноническому виду, чтобы ловить почти-дубли."""
-    text = text.lower().strip()
+    text = text.lower()
     text = re.sub(r"https?://\S+", "", text)   # ссылки не считаем
     text = re.sub(r"[^\w\s]", "", text, flags=re.UNICODE)  # пунктуация
     text = re.sub(r"\s+", " ", text)
-    return text
+    # strip именно в конце: до него удаление ссылки оставляло хвостовой пробел,
+    # и пост со ссылкой не считался дублем самого себя без ссылки
+    return text.strip()
 
 
 def text_hash(text: str) -> str:
