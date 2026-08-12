@@ -86,9 +86,20 @@ X_USERNAME=gytfel1
 ### 2. Проект
 
 ```bash
-pip install -r requirements.txt
 cp .env.example .env
 nano .env          # вставь ключи
+bash setup.sh      # проверит Python, поставит библиотеки, проверит ключи
+```
+
+`setup.sh` держит библиотеки в отдельном окружении `.venv` и останавливается на первом
+же несоответствии, объясняя, что чинить. Активировать окружение не нужно — дальше
+запускай бота через `.venv/bin/python main.py …`.
+
+Если предпочитаешь вручную:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 ### 3. Тексты постов
