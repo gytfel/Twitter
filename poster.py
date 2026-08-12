@@ -6,6 +6,7 @@
 import logging
 import time
 
+import requests
 import tweepy
 
 log = logging.getLogger(__name__)
@@ -77,6 +78,15 @@ class Poster:
                 raise PostError(
                     f"401 Unauthorized: {e}. Ключи неверные или отозваны — проверь .env."
                 ) from e
+
+            except requests.exceptions.RequestException as e:
+                # Сетевые сбои tweepy в свои исключения не заворачивает, они летят
+                # наружу как есть. Без этой ветки обрыв связи убивал бы публикацию
+                # мимо ретраев — хотя ретраи нужны ровно для таких случаев.
+                log.warning("Сеть недоступна (%s). Попытка %s/%s, жду %s сек.",
+                            e, attempt, max_retries, delay)
+                time.sleep(delay)
+                delay *= 2
 
             except tweepy.errors.TweepyException as e:
                 log.warning("Ошибка API (%s). Попытка %s/%s, жду %s сек.",

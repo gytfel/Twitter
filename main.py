@@ -160,7 +160,10 @@ def preview(cfg) -> None:
     print(f"\n--- превью, {len(text)}/280 символов ---\n{text}\n")
 
 
-def check(cfg) -> None:
+def check(cfg) -> int:
+    """Проверка ключей и расписания. Диагностика, а не трейсбек: сюда смотрят,
+    когда что-то уже не работает."""
+    import requests
     import tweepy
 
     client = tweepy.Client(
@@ -169,9 +172,46 @@ def check(cfg) -> None:
         access_token=cfg.x_access_token,
         access_token_secret=cfg.x_access_secret,
     )
-    me = client.get_me()
-    print(f"Ключи рабочие. Аккаунт: @{me.data.username} (id {me.data.id})")
+
+    keys_ok = True
+    try:
+        me = client.get_me()
+        if me.data is None:
+            print("X ответил, но аккаунт не вернул. Проверь, что токены выпущены "
+                  "для того же приложения, что и API Key.")
+            keys_ok = False
+        else:
+            print(f"Ключи рабочие. Аккаунт: @{me.data.username} (id {me.data.id})")
+
+    except tweepy.errors.Unauthorized:
+        print("401 Unauthorized — ключи неверные или отозваны.\n"
+              "  Проверь, что все четыре значения в .env скопированы целиком и без пробелов.")
+        keys_ok = False
+
+    except tweepy.errors.Forbidden:
+        print("403 Forbidden — доступ есть, но не на запись.\n"
+              "  У приложения права Read вместо Read and Write, либо Access Token\n"
+              "  выпущен до смены прав — перевыпусти его.")
+        keys_ok = False
+
+    except tweepy.errors.TooManyRequests:
+        print("429 Too Many Requests — упёрся в rate limit.\n"
+              "  Ключи, скорее всего, рабочие. Повтори проверку через несколько минут.")
+        keys_ok = False
+
+    except requests.exceptions.RequestException as e:
+        print(f"Нет связи с api.twitter.com ({type(e).__name__}).\n"
+              f"  Проверь интернет, прокси и файрвол. Подробности: {str(e)[:200]}")
+        keys_ok = False
+
+    except tweepy.errors.TweepyException as e:
+        print(f"X API вернул ошибку: {e}")
+        keys_ok = False
+
+    # Расписание считается локально — показываем даже когда ключи не прошли
     print("Расписание на сегодня:", [t.strftime("%H:%M") for t in slot_times(cfg, date.today())])
+    print(f"Режим контента: {cfg.content_mode}, DRY_RUN: {'да' if cfg.dry_run else 'нет'}")
+    return 0 if keys_ok else 1
 
 
 # ------------------------------------------------------------------------ CLI
@@ -199,10 +239,14 @@ def main() -> int:
         elif args.command == "preview":
             preview(cfg)
         elif args.command == "check":
-            check(cfg)
+            return check(cfg)
     except KeyboardInterrupt:
         print("\nОстановлено.")
         return 130
+    except GeneratorError as e:
+        # Ожидаемый исход, а не поломка бота: трейсбек тут только мешает
+        print(f"Не удалось получить текст поста: {e}", file=sys.stderr)
+        return 1
     except Exception as e:
         log.exception("Фатальная ошибка: %s", e)
         return 1
