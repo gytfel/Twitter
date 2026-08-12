@@ -69,6 +69,11 @@ class Config:
     x_access_token: str = field(default_factory=lambda: _env("X_ACCESS_TOKEN", required=True))
     x_access_secret: str = field(default_factory=lambda: _env("X_ACCESS_TOKEN_SECRET", required=True))
 
+    # Ожидаемый аккаунт. На то, куда уйдёт пост, НЕ влияет — аккаунт целиком
+    # определяется Access Token. Нужен, чтобы `check` поймал чужие токены
+    # до того, как пост уйдёт не туда.
+    x_username: str = field(default_factory=lambda: _env("X_USERNAME").lstrip("@"))
+
     # --- Источник контента: "file" (список готовых постов) или "ai" (генерация) ---
     content_mode: str = field(default_factory=lambda: _env("CONTENT_MODE", "file"))
 

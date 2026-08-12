@@ -181,7 +181,14 @@ def check(cfg) -> int:
                   "для того же приложения, что и API Key.")
             keys_ok = False
         else:
-            print(f"Ключи рабочие. Аккаунт: @{me.data.username} (id {me.data.id})")
+            actual = me.data.username
+            print(f"Ключи рабочие. Аккаунт: @{actual} (id {me.data.id})")
+
+            if cfg.x_username and actual.lower() != cfg.x_username.lower():
+                print(f"  ВНИМАНИЕ: ожидался @{cfg.x_username}, а токены принадлежат @{actual}.\n"
+                      f"  Посты уйдут не в тот аккаунт. Зайди на developer.x.com под\n"
+                      f"  @{cfg.x_username} и перевыпусти Access Token оттуда.")
+                keys_ok = False
 
     except tweepy.errors.Unauthorized:
         print("401 Unauthorized — ключи неверные или отозваны.\n"
